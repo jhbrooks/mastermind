@@ -1,6 +1,10 @@
+require "./mastermind_ai"
+
 # This class operates a Mastermind game
 class Game
-  def self.default_new(breaker_type, maker_type, turns, slots)
+  include MastermindAI
+
+  def self.create(breaker_type, maker_type, turns, slots)
     Game.new(Player.new("Player 1", breaker_type),
              Player.new("Player 2", maker_type),
              Board.new(turns, slots))
@@ -12,26 +16,26 @@ class Game
     @turns = board.turns
     @slots = board.slots
     @line_width = 80
-    @valid_colors = %w(R O Y G I V)
-    @valid_scores = %w(B W -)
+    @code_marks = %w(R O Y G I V)
+    @score_marks = %w(B W -)
     @state = State.new(maker, 1, 1, board)
   end
 
   def start
-    set_target_row
+    set_target_code
     take_breaker_turn
   end
 
   private
 
   attr_reader :breaker, :maker, :turns, :slots,
-              :line_width, :valid_colors, :valid_scores, :state
+              :line_width, :code_marks, :score_marks, :state
 
-  def set_target_row
+  def set_target_code
     if state.current_player.type == :human
-      human_select_and_make_moves_in(:target_rows, valid_colors)
+      human_select_and_make_moves_in(:target_codes, code_marks)
     else
-      computer_select_and_make_moves_in(:target_rows, valid_colors)
+      computer_select_and_make_moves_in(:target_codes, code_marks)
     end
     advance_player
   end
@@ -39,7 +43,7 @@ class Game
   def take_breaker_turn
     draw_board
     puts "It is #{state.current_player.name}'s turn.".center(line_width)
-    select_and_make_moves_in(:rows)
+    set_code
     if state.win?
       win
     else
@@ -51,8 +55,8 @@ class Game
   def take_maker_turn
     draw_board
     puts "It is #{state.current_player.name}'s turn.".center(line_width)
-    score_row
-    state.sort_score_row
+    set_score
+    state.sort_score
     if state.board_full?
       win
     else
@@ -68,83 +72,56 @@ class Game
     puts
   end
 
-  def score_row
+  def set_score
     if state.current_player.type == :human
-      human_select_and_make_moves_in(:score_rows, valid_scores)
+      human_select_and_make_moves_in(:scores, score_marks)
     else
-      computer_select_and_make_moves_in(:score_rows, valid_scores)
+      computer_select_and_make_moves_in(:scores, score_marks)
     end
   end
 
-  def select_and_make_moves_in(section)
+  def set_code
     if state.current_player.type == :human
-      human_select_and_make_moves_in(section, valid_colors)
+      human_select_and_make_moves_in(:codes, code_marks)
     else
-      computer_select_and_make_moves_in(section, valid_colors)
+      computer_select_and_make_moves_in(:codes, code_marks)
     end
   end
 
   def human_select_and_make_moves_in(section, valid_options)
     puts
-    puts "Color options: #{valid_options.join(', ')}."
+    puts "Mark options: #{valid_options.join(', ')}."
     slots.times do |i|
       state.current_slot = i + 1
       make_move(section, human_mark(valid_options))
     end
   end
 
-  def computer_select_and_make_moves_in(section, valid_options)
-    if section == :score_rows
-      state.match_freqs.clear
-      slots.times do |i|
-        state.current_slot = i + 1
-        current_row_mark = state.board_slot(state.current_turn, state.current_slot, :rows)
-        current_target_mark = state.board_slot(state.current_turn, state.current_slot, :target_rows)
-        if state.match?(current_row_mark, current_target_mark)
-          make_move(section, valid_options[0])
-          state.match_freqs[current_row_mark] += 1
-        else
-          make_move(section, valid_options[2])
-        end
-      end
-      slots.times do |i|
-        state.current_slot = i + 1
-        current_row_mark = state.board_slot(state.current_turn, state.current_slot, :rows)
-        current_target_mark = state.board_slot(state.current_turn, state.current_slot, :target_rows)
-        if state.partial_match?(current_row_mark) && !(state.match?(current_row_mark, current_target_mark))
-          make_move(section, valid_options[1])
-          state.match_freqs[current_row_mark] += 1
-        end
-      end
-    else
-      slots.times do |i|
-        state.current_slot = i + 1
-        make_move(section, (valid_options[rand(valid_options.length)]))
-      end
-    end
-  end
-
   def human_mark(valid_options)
-    puts "Please select a color for slot #{state.current_slot}."
+    puts "Please select a mark for slot #{state.current_slot}."
     mark = gets.chomp!.upcase
     if !(valid_options.include?(mark))
-      puts "Invalid color! Please try again."
+      puts "Invalid entry! Please try again."
       human_mark(valid_options)
     else
       return mark
     end
   end
 
-  def make_move(section, color_mark)
-    state.update(section, color_mark)
+  def make_move(section, mark)
+    state.update(section, mark)
   end
 
   def win
-    puts
-    puts state.target_graphic(line_width)
+    draw_target
     draw_board
     puts "*** #{state.current_player.name} has won! ***".center(line_width)
     puts
+  end
+
+  def draw_target
+    puts
+    puts state.target_graphic(line_width)
   end
 
   def advance_player
@@ -162,13 +139,17 @@ end
 
 # This class handles game state information
 class State
-  attr_accessor :current_player, :current_turn, :current_slot, :match_freqs
+  attr_accessor :current_player, :current_turn, :current_slot, :gathering_info,
+                :match_freqs, :cummulative_match_freqs, :current_options
 
   def initialize(current_player, current_turn, current_slot, board)
     @current_player = current_player
     @current_turn = current_turn
     @current_slot = current_slot
+    @gathering_info = true
     @match_freqs = Hash.new(0)
+    @cummulative_match_freqs = Hash.new(0)
+    @current_options = []
     @board = board
   end
 
@@ -177,7 +158,7 @@ class State
   end
 
   def target_graphic(line_width)
-    board.target_rows_graphic(line_width)
+    board.target_codes_graphic(line_width)
   end
 
   def update(section, color_mark)
@@ -185,7 +166,7 @@ class State
   end
 
   def win?
-    current_row == board.target_rows[0]
+    current_code == board.target_code
   end
 
   def board_full?
@@ -196,127 +177,141 @@ class State
     board.slot(row, column, section)
   end
 
-  def match?(current_row_mark, current_target_mark)
-    current_row_mark == current_target_mark
+  def board_codes
+    board.codes
   end
 
-  def partial_match?(current_row_mark)
-    p current_row_mark
-    p match_freqs
-    p board.target_rows[0]
-    p target_row_freqs
-    board.target_rows[0].include?(current_row_mark) &&
-      match_freqs[current_row_mark] < target_row_freqs[current_row_mark]
+  def board_code(row)
+    board.code(row)
   end
 
-  def target_row_freqs
+  def board_score(row)
+    board.score(row)
+  end
+
+  def match?(code_mark, target_mark)
+    code_mark == target_mark
+  end
+
+  def partial_match?(code_mark)
+    board.target_code.include?(code_mark) &&
+      match_freqs[code_mark] < target_code_freqs[code_mark]
+  end
+
+  def target_code_freqs
     marks_and_freqs = Hash.new(0)
-    board.target_rows[0].each do |mark|
+    board.target_code.each do |mark|
       marks_and_freqs[mark] += 1
     end
     marks_and_freqs
   end
 
-  def sort_score_row
-    board.score_rows[board.turns - current_turn].sort!.reverse!
+  def sort_score
+    board.score(current_turn).sort!.reverse!
+  end
+
+  def current_code
+    board.code(current_turn)
   end
 
   private
 
   attr_reader :board
-
-  def current_row
-    board.row(current_turn)
-  end
 end
 
 # This class handles board information
 class Board
-  attr_reader :turns, :slots, :target_rows, :score_rows
+  attr_reader :turns, :slots, :codes
 
   def initialize(turns, slots)
     @turns = turns
     @slots = slots
-    @rows = []
+    @codes = []
+    @target_codes = [[]]
+    @scores = []
     turns.times do
-      @rows << []
+      @codes << []
+      @scores << []
       slots.times do
-        @rows[-1] << " "
+        @codes[-1] << " "
+        @scores[-1] << " "
       end
     end
-    @target_rows = [[]]
     slots.times do
-      @target_rows[-1] << " "
-    end
-    @score_rows = []
-    turns.times do
-      @score_rows << []
-      slots.times do
-        @score_rows[-1] << " "
-      end
+      @target_codes[-1] << " "
     end
   end
 
   def full?
-    rows.all? do |row|
-      row.none? { |slot| slot == " " }
+    codes.all? do |code|
+      code.none? { |slot| slot == " " }
     end
   end
 
-  def update(row, column, section, color_mark)
-    if section == :rows
-      rows[turns - row][column - 1] = color_mark
-    elsif section == :target_rows
-      target_rows[0][column - 1] = color_mark
+  def update(row, column, section, mark)
+    if section == :codes
+      codes[turns - row][column - 1] = mark
+    elsif section == :target_codes
+      target_code[column - 1] = mark
     else
-      score_rows[turns - row][column - 1] = color_mark
+      scores[turns - row][column - 1] = mark
     end
   end
 
   def slot(row, column, section)
-    if section == :rows
-      return rows[turns - row][column - 1]
+    if section == :codes
+      return codes[turns - row][column - 1]
+    elsif section == :target_codes
+      return target_code[column - 1]
     else
-      return target_rows[0][column - 1]
+      return scores[turns - row][column - 1]
     end
   end
 
-  def row(row)
-    rows[turns - row]
+  def code(row)
+    codes[turns - row]
+  end
+
+  def target_code
+    target_codes[0]
+  end
+
+  def score(code)
+    scores[turns - code]
   end
 
   def board_graphic(line_width)
     board_strings = []
-    stored_score_row_strings = score_row_strings
-    row_strings(line_width).each_with_index do |row_string, i|
-      board_strings << ("#{row_string} #{stored_score_row_strings[i]}")
+    stored_score_strings = score_strings
+    code_strings(line_width).each_with_index do |code_string, i|
+      board_strings << ("#{code_string} #{stored_score_strings[i]}")
     end
     dash_string = ("--#{'-' * slots}#{'---' * (slots - 1)}")
     board_strings.join("\n#{dash_string.center(line_width)}\n")
   end
 
-  def row_strings(line_width)
-    row_strings = rows.map do |row|
-      row_string = "{ #{row.join(' | ')} }"
-      row_string.rjust((line_width / 2) + (row_string.length / 2))
+  def code_strings(line_width)
+    code_strings = codes.map do |code|
+      code_string = "{ #{code.join(' | ')} }"
+      code_string.rjust((line_width / 2) + (code_string.length / 2))
     end
-    row_strings
+    code_strings
   end
 
-  def score_row_strings
-    score_row_strings = score_rows.map do |score_row|
-      "[#{score_row.join(':')}]"
+  def score_strings
+    score_strings = scores.map do |score|
+      "[#{score.join(':')}]"
     end
-    score_row_strings
+    score_strings
   end
 
-  def target_rows_graphic(line_width)
-    "*** { #{target_rows[0].join(' | ')} } ***".center(line_width)
+  def target_codes_graphic(line_width)
+    "*** { #{target_code.join(' | ')} } ***".center(line_width)
   end
 
   private
 
-  attr_reader :rows
+  attr_reader :target_codes, :scores
 end
 
 # This class handles player information
@@ -330,5 +325,5 @@ class Player
   end
 end
 
-g = Game.default_new(:human, :computer, 8, 4)
+g = Game.create(:computer, :computer, 12, 4)
 g.start
