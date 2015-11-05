@@ -1,8 +1,10 @@
-require "./mastermind_ai"
+require "./mastermind_human"
+require "./mastermind_computer"
 
 # This class operates a Mastermind game
 class Game
-  include MastermindAI
+  include MastermindHuman
+  include MastermindComputer
 
   def self.create(breaker_type, maker_type, turns, slots)
     Game.new(Player.new("Player 1", breaker_type),
@@ -22,7 +24,8 @@ class Game
   end
 
   def start
-    set_target_code
+    set_section(:target_codes, code_marks)
+    advance_player
     take_breaker_turn
   end
 
@@ -31,19 +34,18 @@ class Game
   attr_reader :breaker, :maker, :turns, :slots,
               :line_width, :code_marks, :score_marks, :state
 
-  def set_target_code
+  def set_section(section, valid_options)
     if state.current_player.type == :human
-      human_select_and_make_moves_in(:target_codes, code_marks)
+      human_select_and_make_moves_in(section, valid_options)
     else
-      computer_select_and_make_moves_in(:target_codes, code_marks)
+      computer_select_and_make_moves_in(section, valid_options)
     end
-    advance_player
   end
 
   def take_breaker_turn
     draw_board
     puts "It is #{state.current_player.name}'s turn.".center(line_width)
-    set_code
+    set_section(:codes, code_marks)
     if state.win?
       win
     else
@@ -55,7 +57,7 @@ class Game
   def take_maker_turn
     draw_board
     puts "It is #{state.current_player.name}'s turn.".center(line_width)
-    set_score
+    set_section(:scores, score_marks)
     state.sort_score
     if state.board_full?
       win
@@ -72,39 +74,10 @@ class Game
     puts
   end
 
-  def set_score
-    if state.current_player.type == :human
-      human_select_and_make_moves_in(:scores, score_marks)
-    else
-      computer_select_and_make_moves_in(:scores, score_marks)
-    end
-  end
-
-  def set_code
-    if state.current_player.type == :human
-      human_select_and_make_moves_in(:codes, code_marks)
-    else
-      computer_select_and_make_moves_in(:codes, code_marks)
-    end
-  end
-
-  def human_select_and_make_moves_in(section, valid_options)
-    puts
-    puts "Mark options: #{valid_options.join(', ')}."
+  def once_per_slot
     slots.times do |i|
       state.current_slot = i + 1
-      make_move(section, human_mark(valid_options))
-    end
-  end
-
-  def human_mark(valid_options)
-    puts "Please select a mark for slot #{state.current_slot}."
-    mark = gets.chomp!.upcase
-    if !(valid_options.include?(mark))
-      puts "Invalid entry! Please try again."
-      human_mark(valid_options)
-    else
-      return mark
+      yield
     end
   end
 
@@ -140,7 +113,7 @@ end
 # This class handles game state information
 class State
   attr_accessor :current_player, :current_turn, :current_slot, :gathering_info,
-                :match_freqs, :cummulative_match_freqs, :current_options
+                :match_freqs, :running_match_freqs, :current_options
 
   def initialize(current_player, current_turn, current_slot, board)
     @current_player = current_player
@@ -148,7 +121,7 @@ class State
     @current_slot = current_slot
     @gathering_info = true
     @match_freqs = Hash.new(0)
-    @cummulative_match_freqs = Hash.new(0)
+    @running_match_freqs = Hash.new(0)
     @current_options = []
     @board = board
   end
@@ -177,16 +150,8 @@ class State
     board.slot(row, column, section)
   end
 
-  def board_codes
-    board.codes
-  end
-
   def board_code(row)
     board.code(row)
-  end
-
-  def board_score(row)
-    board.score(row)
   end
 
   def match?(code_mark, target_mark)
@@ -211,7 +176,7 @@ class State
   end
 
   def current_code
-    board.code(current_turn)
+    board_code(current_turn)
   end
 
   private
@@ -221,7 +186,7 @@ end
 
 # This class handles board information
 class Board
-  attr_reader :turns, :slots, :codes
+  attr_reader :turns, :slots
 
   def initialize(turns, slots)
     @turns = turns
@@ -237,9 +202,7 @@ class Board
         @scores[-1] << " "
       end
     end
-    slots.times do
-      @target_codes[-1] << " "
-    end
+    slots.times { @target_codes[-1] << " " }
   end
 
   def full?
@@ -299,10 +262,7 @@ class Board
   end
 
   def score_strings
-    score_strings = scores.map do |score|
-      "[#{score.join(':')}]"
-    end
-    score_strings
+    scores.map { |score| "[#{score.join(':')}]" }
   end
 
   def target_codes_graphic(line_width)
@@ -311,7 +271,7 @@ class Board
 
   private
 
-  attr_reader :target_codes, :scores
+  attr_reader :codes, :target_codes, :scores
 end
 
 # This class handles player information
@@ -325,5 +285,5 @@ class Player
   end
 end
 
-g = Game.create(:computer, :computer, 12, 4)
+g = Game.create(:computer, :human, 12, 4)
 g.start
